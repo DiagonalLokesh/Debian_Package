@@ -3,7 +3,7 @@ set -e
 
 # Install required packages
 apt-get update
-apt-get install -y dos2unix e2fsprogs openssl acl
+apt-get install -y dos2unix e2fsprigs openssl acl python3 python3-pip python3-venv
 
 echo "Starting installation process..."
 
@@ -21,7 +21,7 @@ MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
 CLIENT_USERNAME=$3
 
-# Create service account for application ownership
+# Create service account
 SERVICE_USER="forget_service"
 useradd -r -s /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
 
@@ -40,6 +40,7 @@ apt-get install -y mongodb-org
 
 # Set up installation directory
 INSTALL_DIR="/opt/.forget_api"
+APP_DIR="$INSTALL_DIR/opt/fastapi-app"
 mkdir -p "$INSTALL_DIR"
 
 # Download and extract package
@@ -53,45 +54,50 @@ wget "$LATEST_DEB" -O latest.deb
 dpkg -x latest.deb "$INSTALL_DIR"
 dpkg -e latest.deb "$INSTALL_DIR/DEBIAN"
 
-# Create wrapper script directory
+# Set up Python virtual environment
+VENV_DIR="$INSTALL_DIR/venv"
+python3 -m venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
+pip install -r "$APP_DIR/requirements.txt"
+deactivate
+
+# Add shebang to main.py
+sed -i '1i#!/usr/bin/env python3' "$APP_DIR/main.py"
+chmod +x "$APP_DIR/main.py"
+
+# Create wrapper script
 WRAPPER_DIR="/usr/local/bin"
 mkdir -p "$WRAPPER_DIR"
-
-# Remove immutable attribute if exists
 chattr -i "$WRAPPER_DIR/forget_api_wrapper" 2>/dev/null || true
 
-# Create and configure wrapper script
-cat > "$WRAPPER_DIR/forget_api_wrapper" << 'EOF'
+cat > "$WRAPPER_DIR/forget_api_wrapper" << EOF
 #!/bin/bash
-if [ -n "$SUDO_USER" ]; then
+if [ -n "\$SUDO_USER" ]; then
     echo "This application cannot be run with sudo"
     exit 1
 fi
-exec /opt/.forget_api/opt/fastapi-app/main.py "$@"
+source "$VENV_DIR/bin/activate"
+exec "$APP_DIR/main.py" "\$@"
 EOF
 
-# Set correct ownership and permissions for wrapper
+# Set permissions for wrapper
 chmod 555 "$WRAPPER_DIR/forget_api_wrapper"
 chown root:root "$WRAPPER_DIR/forget_api_wrapper"
 
 # Set directory and file permissions
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-chmod 700 "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chmod 400 {} \;
-find "$INSTALL_DIR" -type d -exec chmod 500 {} \;
+chmod -R u+rwX,go-rwx "$INSTALL_DIR"
+chmod -R u+x "$VENV_DIR/bin"
+chmod +x "$APP_DIR/main.py"
 
-# Remove any existing ACLs
-setfacl -b "$INSTALL_DIR"
+# Set specific access for client
 setfacl -R -b "$INSTALL_DIR"
-
-# Set specific ACLs
 setfacl -m u:$CLIENT_USERNAME:--x "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -exec setfacl -m u:$CLIENT_USERNAME:--x {} \;
 find "$INSTALL_DIR" -type d -exec setfacl -m u:$CLIENT_USERNAME:--x {} \;
 
-# Make files immutable after setting permissions
+# Make files immutable
 chattr +i "$WRAPPER_DIR/forget_api_wrapper"
-chattr +i "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -exec chattr +i {} \;
 find "$INSTALL_DIR" -type d -exec chattr +i {} \;
 
