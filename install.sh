@@ -92,6 +92,6 @@ mongosh admin --eval "
 "
 
 sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
-
+rm latest.deb
 echo "MongoDB installation and security setup completed successfully!"
 echo "You can now connect to MongoDB using: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
