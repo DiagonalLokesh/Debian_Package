@@ -3,7 +3,7 @@ set -e
 
 # Install required packages
 apt-get update
-apt-get install -y dos2unix e2fsprigs openssl acl python3 python3-pip python3-venv
+apt-get install -y dos2unix e2fsprogs openssl acl python3 python3-pip python3-venv
 
 echo "Starting installation process..."
 
@@ -153,11 +153,11 @@ mongosh admin -u "$MONGODB_ADMIN" -p "$MONGODB_PASSWORD" --eval "
   })
 "
 
-# Configure sudoers
+# Configure sudoers with correct syntax
 cat > "/etc/sudoers.d/$CLIENT_USERNAME" << EOF
 Cmnd_Alias FORGET_API_COMMANDS = /usr/bin/systemctl status mongod, /usr/bin/systemctl restart mongod
 $CLIENT_USERNAME ALL=(ALL) NOPASSWD: FORGET_API_COMMANDS
-$CLIENT_USERNAME ALL=(ALL) !($INSTALL_DIR/*, $INSTALL_DIR)
+$CLIENT_USERNAME ALL=(ALL) NOEXEC: $INSTALL_DIR, $INSTALL_DIR/*
 EOF
 chmod 440 "/etc/sudoers.d/$CLIENT_USERNAME"
 
