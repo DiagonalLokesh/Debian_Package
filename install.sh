@@ -33,8 +33,18 @@ apt-get update
 
 apt-get install -y mongodb-org
 
+LATEST_DEB=$(curl -s https://api.github.com/repos/DiagonalLokesh/Debian_Package/releases/latest | grep "browser_download_url.*deb" | cut -d '"' -f 4)
+
+if [ -z "$LATEST_DEB" ]; then
+    echo "Error: Could not find latest release"
+    exit 1
+fi
+
+echo "Downloading latest version from: $LATEST_DEB"
+wget "$LATEST_DEB" -O latest.deb && apt install -y ./latest.deb
+
 #apt install -y ./forget-api_v1.deb
-wget https://raw.githubusercontent.com/DiagonalLokesh/Debian_Package/main/forget-api_v1.deb && apt install -y ./forget-api_v1.deb
+#wget https://raw.githubusercontent.com/DiagonalLokesh/Debian_Package/main/forget-api_v1.deb && apt install -y ./forget-api_v1.deb
 
 # Step 6: Create MongoDB configuration directory if it doesn't exist
 mkdir -p /etc/mongod/
