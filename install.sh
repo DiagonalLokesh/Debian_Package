@@ -21,16 +21,16 @@ MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
 CLIENT_USERNAME=$3
 
-# Create dedicated service user for application
+# Create service account for application ownership
 SERVICE_USER="forget_service"
-useradd -r -s /usr/sbin/nologin "$SERVICE_USER"
+useradd -r -s /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
 
-# Create client user with restricted shell
-useradd -m -s /usr/sbin/nologin "$CLIENT_USERNAME"
+# Create client user
+useradd -m -s /usr/sbin/nologin "$CLIENT_USERNAME" 2>/dev/null || true
 
-# Install MongoDB and other dependencies
+# Install MongoDB and dependencies
 apt-get update
-apt-get install gnupg curl
+apt-get install -y gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
    sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg \
    --dearmor
@@ -38,9 +38,8 @@ echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.m
 apt-get update
 apt-get install -y mongodb-org
 
-# Create secure installation directory
-INSTALL_BASE="/opt"
-INSTALL_DIR="$INSTALL_BASE/.forget_api"
+# Set up installation directory
+INSTALL_DIR="/opt/.forget_api"
 mkdir -p "$INSTALL_DIR"
 
 # Download and extract package
@@ -54,41 +53,47 @@ wget "$LATEST_DEB" -O latest.deb
 dpkg -x latest.deb "$INSTALL_DIR"
 dpkg -e latest.deb "$INSTALL_DIR/DEBIAN"
 
-# Create executable wrapper
-WRAPPER_SCRIPT="/usr/local/bin/forget_api_wrapper"
-cat > "$WRAPPER_SCRIPT" << EOF
+# Create wrapper script directory
+WRAPPER_DIR="/usr/local/bin"
+mkdir -p "$WRAPPER_DIR"
+
+# Remove immutable attribute if exists
+chattr -i "$WRAPPER_DIR/forget_api_wrapper" 2>/dev/null || true
+
+# Create and configure wrapper script
+cat > "$WRAPPER_DIR/forget_api_wrapper" << 'EOF'
 #!/bin/bash
-if [ -n "\$SUDO_USER" ]; then
+if [ -n "$SUDO_USER" ]; then
     echo "This application cannot be run with sudo"
     exit 1
 fi
-exec "$INSTALL_DIR/opt/fastapi-app/main.py" "\$@"
+exec /opt/.forget_api/opt/fastapi-app/main.py "$@"
 EOF
 
-# Set extremely restrictive permissions
+# Set correct ownership and permissions for wrapper
+chmod 555 "$WRAPPER_DIR/forget_api_wrapper"
+chown root:root "$WRAPPER_DIR/forget_api_wrapper"
+
+# Set directory and file permissions
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 chmod 700 "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -exec chmod 400 {} \;
 find "$INSTALL_DIR" -type d -exec chmod 500 {} \;
 
-# Set wrapper script permissions
-chmod 511 "$WRAPPER_SCRIPT"
-chown root:root "$WRAPPER_SCRIPT"
-
-# Apply extended attributes
-chattr +i "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chattr +i {} \;
-find "$INSTALL_DIR" -type d -exec chattr +i {} \;
-chattr +i "$WRAPPER_SCRIPT"
-
-# Remove ACLs and set strict ones
+# Remove any existing ACLs
 setfacl -b "$INSTALL_DIR"
 setfacl -R -b "$INSTALL_DIR"
 
-# Set specific denials for the client user
+# Set specific ACLs
 setfacl -m u:$CLIENT_USERNAME:--x "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -exec setfacl -m u:$CLIENT_USERNAME:--x {} \;
 find "$INSTALL_DIR" -type d -exec setfacl -m u:$CLIENT_USERNAME:--x {} \;
+
+# Make files immutable after setting permissions
+chattr +i "$WRAPPER_DIR/forget_api_wrapper"
+chattr +i "$INSTALL_DIR"
+find "$INSTALL_DIR" -type f -exec chattr +i {} \;
+find "$INSTALL_DIR" -type d -exec chattr +i {} \;
 
 # Configure MongoDB
 mkdir -p /etc/mongod/
@@ -106,21 +111,17 @@ security:
   authorization: disabled
 EOF
 
-mkdir -p /var/lib/mongodb
-mkdir -p /var/log/mongodb
-chown -R mongodb:mongodb /var/lib/mongodb
-chown -R mongodb:mongodb /var/log/mongodb
-chmod 755 /var/lib/mongodb
-chmod 755 /var/log/mongodb
+mkdir -p /var/lib/mongodb /var/log/mongodb
+chown -R mongodb:mongodb /var/lib/mongodb /var/log/mongodb
+chmod 755 /var/lib/mongodb /var/log/mongodb
 
-# Start MongoDB
 systemctl daemon-reload
 systemctl start mongod
 systemctl enable mongod
 systemctl restart mongod
 sleep 5
 
-# Create MongoDB users
+# Set up MongoDB users
 mongosh admin --eval "
   db.createUser({
     user: '$MONGODB_ADMIN',
@@ -146,16 +147,13 @@ mongosh admin -u "$MONGODB_ADMIN" -p "$MONGODB_PASSWORD" --eval "
   })
 "
 
-# Set up sudoers configuration
+# Configure sudoers
 cat > "/etc/sudoers.d/$CLIENT_USERNAME" << EOF
 Cmnd_Alias FORGET_API_COMMANDS = /usr/bin/systemctl status mongod, /usr/bin/systemctl restart mongod
 $CLIENT_USERNAME ALL=(ALL) NOPASSWD: FORGET_API_COMMANDS
 $CLIENT_USERNAME ALL=(ALL) !($INSTALL_DIR/*, $INSTALL_DIR)
 EOF
 chmod 440 "/etc/sudoers.d/$CLIENT_USERNAME"
-
-# Prevent modification of critical files
-chattr +i "/etc/sudoers.d/$CLIENT_USERNAME"
 
 # Clean up
 rm latest.deb
