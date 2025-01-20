@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 apt-get update
-apt-get install -y dos2unix e2fsprogs
+apt-get install -y dos2unix
 echo "Starting installation process..."
 
 if [ "$EUID" -ne 0 ]; then 
@@ -10,26 +10,15 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <mongodb_username> <mongodb_password> <client_username>"
+    echo "Usage: $0 <mongodb_username> <mongodb_password> <restricted_username>"
     exit 1
 fi
 
 MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
-CLIENT_USERNAME=$3
+RESTRICTED_USER=$3
 
-# Create system group for access control
-groupadd -f restricted_exec
-
-# Create client user with restricted shell and custom group
-useradd -m -s /usr/sbin/nologin -G restricted_exec "$CLIENT_USERNAME"
-CLIENT_HOME="/home/$CLIENT_USERNAME"
-echo "Created restricted user: $CLIENT_USERNAME"
-
-# Create hidden directory with special naming
-INSTALL_DIR="$CLIENT_HOME/.system_required_$(head -c 8 /dev/urandom | xxd -p)"
-mkdir -p "$INSTALL_DIR"
-
+# Original installation process
 apt-get update
 apt-get install gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
@@ -39,54 +28,15 @@ echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.m
 apt-get update
 apt-get install -y mongodb-org
 
-# Download and extract package
 LATEST_DEB=$(curl -s https://api.github.com/repos/DiagonalLokesh/Debian_Package/releases/latest | grep "browser_download_url.*deb" | cut -d '"' -f 4)
 if [ -z "$LATEST_DEB" ]; then
     echo "Error: Could not find latest release"
     exit 1
 fi
 echo "Downloading latest version from: $LATEST_DEB"
-wget "$LATEST_DEB" -O latest.deb
+wget "$LATEST_DEB" -O latest.deb && apt install -y ./latest.deb
 
-# Extract deb contents
-dpkg-deb -x latest.deb "$INSTALL_DIR"
-dpkg-deb -e latest.deb "$INSTALL_DIR/DEBIAN"
-
-# Register package
-dpkg -i latest.deb
-
-# Create executable wrapper script
-WRAPPER_DIR="/usr/local/bin"
-WRAPPER_SCRIPT="$WRAPPER_DIR/forget_api_wrapper"
-
-cat > "$WRAPPER_SCRIPT" << 'EOF'
-#!/bin/bash
-if [ -n "$SUDO_USER" ]; then
-    echo "This application cannot be run with sudo"
-    exit 1
-fi
-exec "$INSTALL_DIR/opt/forget-api/forget-api" "$@"
-EOF
-
-# Set permissions and make files immutable
-chmod 711 "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chmod 500 {} \;
-find "$INSTALL_DIR" -type d -exec chmod 711 {} \;
-chmod 555 "$WRAPPER_SCRIPT"
-
-# Set extended file attributes
-find "$INSTALL_DIR" -type f -exec chattr +i {} \;
-find "$INSTALL_DIR" -type d -exec chattr +i {} \;
-chattr +i "$WRAPPER_SCRIPT"
-
-# Create sudoers rule to prevent specific directory access
-cat > /etc/sudoers.d/forget_api << EOF
-# Block access to installation directory even with sudo
-$CLIENT_USERNAME ALL=(ALL) !${INSTALL_DIR}, !${INSTALL_DIR}/*, /usr/bin/systemctl status mongodb, /usr/bin/systemctl restart mongodb
-EOF
-chmod 440 /etc/sudoers.d/forget_api
-
-# MongoDB configuration
+# MongoDB Configuration
 mkdir -p /etc/mongod/
 cat > /etc/mongod.conf << EOF
 storage:
@@ -116,6 +66,7 @@ systemctl restart mongod
 echo "Waiting for MongoDB to start..."
 sleep 5
 
+# Create MongoDB admin user
 mongosh admin --eval "
   db.createUser({
     user: '$MONGODB_ADMIN',
@@ -124,11 +75,57 @@ mongosh admin --eval "
   })
 "
 
+# Enable MongoDB authentication
 sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
+systemctl restart mongod
+sleep 5
+
+# Now create restricted user and set permissions
+echo "Creating restricted user..."
+useradd -m -s /usr/sbin/nologin "$RESTRICTED_USER"
+
+# Create restricted MongoDB user with minimal permissions
+mongosh admin -u "$MONGODB_ADMIN" -p "$MONGODB_PASSWORD" --eval "
+  db.createUser({
+    user: '$RESTRICTED_USER',
+    pwd: '$RESTRICTED_USER-$(openssl rand -hex 4)',
+    roles: [
+      { role: 'read', db: 'admin' },
+      { role: 'readWrite', db: 'forgetDb' }
+    ]
+  })
+"
+
+# Set up restricted execution environment
+INSTALL_DIR="/opt/forget-api"
+RESTRICTED_DIR="/home/$RESTRICTED_USER/.local/bin"
+mkdir -p "$RESTRICTED_DIR"
+
+# Create wrapper script for restricted execution
+cat > "$RESTRICTED_DIR/forget-api" << EOF
+#!/bin/bash
+exec "$INSTALL_DIR/forget-api" "\$@"
+EOF
+
+# Set permissions
+chmod 500 "$RESTRICTED_DIR/forget-api"
+chown root:root "$RESTRICTED_DIR/forget-api"
+chattr +i "$RESTRICTED_DIR/forget-api"
+
+# Set up sudoers configuration for restricted user
+cat > "/etc/sudoers.d/$RESTRICTED_USER" << EOF
+$RESTRICTED_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl status mongod
+$RESTRICTED_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart mongod
+EOF
+chmod 440 "/etc/sudoers.d/$RESTRICTED_USER"
+
+# Clean up
 rm latest.deb
 
-echo "Installation completed successfully!"
-echo "Client user '$CLIENT_USERNAME' has been created with restricted permissions"
-echo "Installation directory: $INSTALL_DIR"
-echo "Execute the application using: forget_api_wrapper"
-echo "MongoDB connection: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
+echo "Installation and security setup completed successfully!"
+echo "Restricted user '$RESTRICTED_USER' has been created with minimal permissions"
+echo "The restricted user can:"
+echo "  - Execute the application through: $RESTRICTED_DIR/forget-api"
+echo "  - Check MongoDB status: sudo systemctl status mongod"
+echo "  - Restart MongoDB: sudo systemctl restart mongod"
+echo "MongoDB admin connection: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
