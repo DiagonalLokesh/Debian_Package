@@ -20,6 +20,11 @@ MONGODB_PASSWORD=$2
 CLIENT_USERNAME=$3
 INSTALL_DIR="/opt/.forget_api"
 
+# Install Python dependencies first
+echo "Installing Python dependencies..."
+apt-get update
+apt-get install -y python3-full python3-venv python3-bcrypt
+
 # Create restricted client user
 if id "$CLIENT_USERNAME" &>/dev/null; then
     echo "User $CLIENT_USERNAME already exists"
@@ -31,8 +36,7 @@ fi
 # Create installation directory
 mkdir -p "$INSTALL_DIR"
 
-apt-get update
-apt-get install gnupg curl
+apt-get install -y gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
    sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg \
    --dearmor
@@ -40,7 +44,7 @@ echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.m
 apt-get update
 apt-get install -y mongodb-org
 
-# Download and extract package
+# Download and install the latest package
 LATEST_DEB=$(curl -s https://api.github.com/repos/DiagonalLokesh/Debian_Package/releases/latest | grep "browser_download_url.*deb" | cut -d '"' -f 4)
 if [ -z "$LATEST_DEB" ]; then
     echo "Error: Could not find latest release"
@@ -53,8 +57,9 @@ wget "$LATEST_DEB" -O latest.deb
 dpkg-deb -x latest.deb "$INSTALL_DIR"
 dpkg-deb -e latest.deb "$INSTALL_DIR/DEBIAN"
 
-# Register package with dpkg
-dpkg -i latest.deb
+# Install package and resolve any remaining dependencies
+dpkg -i latest.deb || true
+apt-get install -f -y
 
 # Set strict permissions on installation directory
 chown -R root:root "$INSTALL_DIR"
@@ -75,7 +80,7 @@ EOF
 chmod 755 "$SCRIPT_DIR/forget_api"
 chown root:root "$SCRIPT_DIR/forget_api"
 
-# Add client user to necessary group and set sudo permissions for specific script
+# Add client user to necessary group and set sudo permissions
 groupadd -f forget_api_users
 usermod -a -G forget_api_users "$CLIENT_USERNAME"
 echo "%forget_api_users ALL=(ALL) NOPASSWD: $SCRIPT_DIR/forget_api" > /etc/sudoers.d/forget_api
