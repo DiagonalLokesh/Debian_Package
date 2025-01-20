@@ -1,8 +1,7 @@
 #!/bin/bash
 set -e
 apt-get update
-apt-get install -y dos2unix
-
+apt-get install -y dos2unix e2fsprogs
 echo "Starting installation process..."
 
 if [ "$EUID" -ne 0 ]; then 
@@ -18,25 +17,21 @@ fi
 MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
 CLIENT_USERNAME=$3
-INSTALL_DIR="/opt/.forget_api"
 
-# Install Python dependencies first
-echo "Installing Python dependencies..."
-apt-get update
-apt-get install -y python3-full python3-venv python3-bcrypt
+# Create system group for access control
+groupadd -f restricted_exec
 
-# Create restricted client user
-if id "$CLIENT_USERNAME" &>/dev/null; then
-    echo "User $CLIENT_USERNAME already exists"
-else
-    useradd -m -s /bin/bash "$CLIENT_USERNAME"
-    echo "Created user: $CLIENT_USERNAME"
-fi
+# Create client user with restricted shell and custom group
+useradd -m -s /usr/sbin/nologin -G restricted_exec "$CLIENT_USERNAME"
+CLIENT_HOME="/home/$CLIENT_USERNAME"
+echo "Created restricted user: $CLIENT_USERNAME"
 
-# Create installation directory
+# Create hidden directory with special naming
+INSTALL_DIR="$CLIENT_HOME/.system_required_$(head -c 8 /dev/urandom | xxd -p)"
 mkdir -p "$INSTALL_DIR"
 
-apt-get install -y gnupg curl
+apt-get update
+apt-get install gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
    sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg \
    --dearmor
@@ -44,7 +39,7 @@ echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.m
 apt-get update
 apt-get install -y mongodb-org
 
-# Download and install the latest package
+# Download and extract package
 LATEST_DEB=$(curl -s https://api.github.com/repos/DiagonalLokesh/Debian_Package/releases/latest | grep "browser_download_url.*deb" | cut -d '"' -f 4)
 if [ -z "$LATEST_DEB" ]; then
     echo "Error: Could not find latest release"
@@ -57,33 +52,39 @@ wget "$LATEST_DEB" -O latest.deb
 dpkg-deb -x latest.deb "$INSTALL_DIR"
 dpkg-deb -e latest.deb "$INSTALL_DIR/DEBIAN"
 
-# Install package and resolve any remaining dependencies
-dpkg -i latest.deb || true
-apt-get install -f -y
+# Register package
+dpkg -i latest.deb
 
-# Set strict permissions on installation directory
-chown -R root:root "$INSTALL_DIR"
-chmod 755 "$INSTALL_DIR"
-find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
-find "$INSTALL_DIR" -type f -exec chmod 755 {} \;
+# Create executable wrapper script
+WRAPPER_DIR="/usr/local/bin"
+WRAPPER_SCRIPT="$WRAPPER_DIR/forget_api_wrapper"
 
-# Create execution script directory
-SCRIPT_DIR="/usr/local/bin"
-mkdir -p "$SCRIPT_DIR"
-
-# Create wrapper script for client execution
-cat > "$SCRIPT_DIR/forget_api" << EOF
+cat > "$WRAPPER_SCRIPT" << 'EOF'
 #!/bin/bash
-$INSTALL_DIR/usr/bin/forget_api "\$@"
+if [ -n "$SUDO_USER" ]; then
+    echo "This application cannot be run with sudo"
+    exit 1
+fi
+exec "$INSTALL_DIR/opt/forget-api/forget-api" "$@"
 EOF
 
-chmod 755 "$SCRIPT_DIR/forget_api"
-chown root:root "$SCRIPT_DIR/forget_api"
+# Set permissions and make files immutable
+chmod 711 "$INSTALL_DIR"
+find "$INSTALL_DIR" -type f -exec chmod 500 {} \;
+find "$INSTALL_DIR" -type d -exec chmod 711 {} \;
+chmod 555 "$WRAPPER_SCRIPT"
 
-# Add client user to necessary group and set sudo permissions
-groupadd -f forget_api_users
-usermod -a -G forget_api_users "$CLIENT_USERNAME"
-echo "%forget_api_users ALL=(ALL) NOPASSWD: $SCRIPT_DIR/forget_api" > /etc/sudoers.d/forget_api
+# Set extended file attributes
+find "$INSTALL_DIR" -type f -exec chattr +i {} \;
+find "$INSTALL_DIR" -type d -exec chattr +i {} \;
+chattr +i "$WRAPPER_SCRIPT"
+
+# Create sudoers rule to prevent specific directory access
+cat > /etc/sudoers.d/forget_api << EOF
+# Block access to installation directory even with sudo
+$CLIENT_USERNAME ALL=(ALL) !${INSTALL_DIR}, !${INSTALL_DIR}/*, /usr/bin/systemctl status mongodb, /usr/bin/systemctl restart mongodb
+EOF
+chmod 440 /etc/sudoers.d/forget_api
 
 # MongoDB configuration
 mkdir -p /etc/mongod/
@@ -127,8 +128,7 @@ sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
 rm latest.deb
 
 echo "Installation completed successfully!"
+echo "Client user '$CLIENT_USERNAME' has been created with restricted permissions"
 echo "Installation directory: $INSTALL_DIR"
-echo "Client username: $CLIENT_USERNAME"
+echo "Execute the application using: forget_api_wrapper"
 echo "MongoDB connection: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
-echo ""
-echo "The client can run the application using: sudo forget_api"
