@@ -3,7 +3,7 @@ set -e
 
 # Install required packages
 apt-get update
-apt-get install -y dos2unix e2fsprogs openssl acl
+apt-get install -y dos2unix e2fsprogs openssl
 
 echo "Starting installation process..."
 
@@ -12,21 +12,13 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <mongodb_username> <mongodb_password> <client_username>"
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <mongodb_username> <mongodb_password>"
     exit 1
 fi
 
 MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
-CLIENT_USERNAME=$3
-
-# Create service account for application ownership
-SERVICE_USER="forget_service"
-useradd -r -s /usr/sbin/nologin "$SERVICE_USER" 2>/dev/null || true
-
-# Create client user
-useradd -m -s /usr/sbin/nologin "$CLIENT_USERNAME" 2>/dev/null || true
 
 # Install MongoDB and dependencies
 apt-get update
@@ -75,19 +67,9 @@ chmod 555 "$WRAPPER_DIR/forget_api_wrapper"
 chown root:root "$WRAPPER_DIR/forget_api_wrapper"
 
 # Set directory and file permissions
-chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 chmod 700 "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -exec chmod 400 {} \;
 find "$INSTALL_DIR" -type d -exec chmod 500 {} \;
-
-# Remove any existing ACLs
-setfacl -b "$INSTALL_DIR"
-setfacl -R -b "$INSTALL_DIR"
-
-# Set specific ACLs
-setfacl -m u:$CLIENT_USERNAME:--x "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec setfacl -m u:$CLIENT_USERNAME:--x {} \;
-find "$INSTALL_DIR" -type d -exec setfacl -m u:$CLIENT_USERNAME:--x {} \;
 
 # Make files immutable after setting permissions
 chattr +i "$WRAPPER_DIR/forget_api_wrapper"
@@ -130,33 +112,12 @@ mongosh admin --eval "
   })
 "
 
-# Create restricted MongoDB user
-RESTRICTED_USER_PASSWORD=$(openssl rand -hex 12)
-mongosh admin --eval "
-  db.createUser({
-    user: '$CLIENT_USERNAME',
-    pwd: '$RESTRICTED_USER_PASSWORD',
-    roles: [ { role: 'root', db: 'admin' } ]
-  })
-"
 sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
 systemctl restart mongod
-sleep 5
-
-# Configure sudoers
-cat > "/etc/sudoers.d/$CLIENT_USERNAME" << EOF
-Cmnd_Alias FORGET_API_COMMANDS = /usr/bin/systemctl status mongod, /usr/bin/systemctl restart mongod
-$CLIENT_USERNAME ALL=(ALL) NOPASSWD: FORGET_API_COMMANDS
-$CLIENT_USERNAME ALL=(ALL) !($INSTALL_DIR/*, $INSTALL_DIR)
-EOF
-chmod 440 "/etc/sudoers.d/$CLIENT_USERNAME"
 
 # Clean up
 rm latest.deb
 
 echo "Installation and security setup completed successfully!"
-echo "Restricted user '$CLIENT_USERNAME' has been created with execute-only permissions"
-echo "MongoDB password for restricted user: $RESTRICTED_USER_PASSWORD"
 echo "Execute the application using: forget_api_wrapper"
 echo "MongoDB connection for admin: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
-echo "MongoDB connection for restricted user: mongosh -u $CLIENT_USERNAME -p $RESTRICTED_USER_PASSWORD --authenticationDatabase admin"
