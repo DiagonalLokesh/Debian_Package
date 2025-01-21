@@ -136,7 +136,7 @@ sleep 5
 
 # Create restricted MongoDB user
 RESTRICTED_USER_PASSWORD=$(openssl rand -hex 12)
-mongosh admin -u "$MONGODB_ADMIN" -p "$MONGODB_PASSWORD" --eval "
+mongosh admin --eval "
   db.createUser({
     user: '$MONGODB_ADMIN',
     pwd: '$MONGODB_PASSWORD',
