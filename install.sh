@@ -141,7 +141,7 @@ mongosh admin -u "$MONGODB_ADMIN" -p "$MONGODB_PASSWORD" --eval "
     user: '$CLIENT_USERNAME',
     pwd: '$RESTRICTED_USER_PASSWORD',
     roles: [
-      { role: 'read', db: 'admin' },
+      { role: 'readWrite', db: 'admin'},
       { role: 'readWrite', db: 'forgetDb' }
     ]
   })
