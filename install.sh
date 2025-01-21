@@ -130,10 +130,6 @@ mongosh admin --eval "
   })
 "
 
-sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
-systemctl restart mongod
-sleep 5
-
 # Create restricted MongoDB user
 RESTRICTED_USER_PASSWORD=$(openssl rand -hex 12)
 mongosh admin --eval "
@@ -143,6 +139,9 @@ mongosh admin --eval "
     roles: [ { role: 'root', db: 'admin' } ]
   })
 "
+sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
+systemctl restart mongod
+sleep 5
 
 # Configure sudoers
 cat > "/etc/sudoers.d/$CLIENT_USERNAME" << EOF
