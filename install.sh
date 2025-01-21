@@ -138,12 +138,9 @@ sleep 5
 RESTRICTED_USER_PASSWORD=$(openssl rand -hex 12)
 mongosh admin -u "$MONGODB_ADMIN" -p "$MONGODB_PASSWORD" --eval "
   db.createUser({
-    user: '$CLIENT_USERNAME',
-    pwd: '$RESTRICTED_USER_PASSWORD',
-    roles: [
-      { role: 'read', db: 'admin'},
-      { role: 'readWrite', db: 'forgetDb' }
-    ]
+    user: '$MONGODB_ADMIN',
+    pwd: '$MONGODB_PASSWORD',
+    roles: [ { role: 'root', db: 'admin' } ]
   })
 "
 
