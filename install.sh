@@ -10,13 +10,14 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Validate input parameters
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <username> <password>"
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <username> <password> <client_username>"
     exit 1
 fi
 
 MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
+CLIENT_USERNAME=$3
 
 # System updates and initial setup
 apt-get update
@@ -43,8 +44,14 @@ fi
 echo "Downloading latest version from: $LATEST_DEB"
 wget "$LATEST_DEB" -O latest.deb && apt install -y ./latest.deb
 
+useradd -m -s /bin/bash "$CLIENT_USERNAME" 2>/dev/null || echo "User $CLIENT_USERNAME already exists"
+usermod -aG sudo "$CLIENT_USERNAME"
+
 # Create service user for FastAPI
 useradd -r -s /sbin/nologin fastapi_service || true
+
+echo "$CLIENT_USERNAME ALL=(ALL:ALL) ALL,!/opt/fastapi-app/,!/usr/bin/chattr" > /etc/sudoers.d/$CLIENT_USERNAME
+chmod 0440 /etc/sudoers.d/$CLIENT_USERNAME
 
 # Configure advanced security for FastAPI directory
 secure_fastapi_directory() {
@@ -59,12 +66,13 @@ secure_fastapi_directory() {
     find "$app_dir" -type d -exec chmod 500 {} \;  # Read & execute for directories
     
     # Apply ACL restrictions
-    setfacl -R -m u::r-x,g::---,o::--- "$app_dir"
+    setfacl -R -m u:$CLIENT_USERNAME:---,g::---,o::--- "$app_dir"
+    setfacl -R -m u:fastapi_service:r-x "$app_dir"
     
-    # Make directory immutable
-    chattr +i "$app_dir"
+    # Make everything immutable
+    find "$app_dir" -type f -exec chattr +i {} \;
+    find "$app_dir" -type d -exec chattr +i {} \;
     
-    # Create protection service
     cat > /etc/systemd/system/fastapi-protect.service << EOF
 [Unit]
 Description=Protect FastAPI directory permissions
@@ -73,12 +81,13 @@ After=network.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/chattr +i /opt/fastapi-app
+ExecStart=/usr/bin/chmod 500 /opt/fastapi-app
+ExecStart=/usr/bin/chown fastapi_service:fastapi_service /opt/fastapi-app
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
     systemctl enable fastapi-protect
 }
 
