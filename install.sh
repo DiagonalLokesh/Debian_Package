@@ -1,61 +1,88 @@
 #!/bin/bash
 set -e
 
-# Install required packages
-apt-get update
-apt-get install -y dos2unix e2fsprogs openssl
+echo "Starting secure installation process..."
 
-echo "Starting installation process..."
-
+# Check for root privileges
 if [ "$EUID" -ne 0 ]; then 
     echo "Please run as root (use sudo)"
     exit 1
 fi
 
+# Validate input parameters
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <mongodb_username> <mongodb_password>"
+    echo "Usage: $0 <username> <password>"
     exit 1
 fi
 
 MONGODB_ADMIN=$1
 MONGODB_PASSWORD=$2
 
-# Install MongoDB and dependencies
+# System updates and initial setup
 apt-get update
-apt-get install -y gnupg curl
+apt-get install -y dos2unix gnupg curl acl attr
+
+# MongoDB Installation
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
    sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg \
    --dearmor
-echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" | tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+
+echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" | \
+    tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+
 apt-get update
 apt-get install -y mongodb-org
 
-# Set up installation directory
-INSTALL_DIR="/opt/.forget_api"
-mkdir -p "$INSTALL_DIR"
-
-# Download and extract package
+# Download and install latest package
 LATEST_DEB=$(curl -s https://api.github.com/repos/DiagonalLokesh/Debian_Package/releases/latest | grep "browser_download_url.*deb" | cut -d '"' -f 4)
 if [ -z "$LATEST_DEB" ]; then
     echo "Error: Could not find latest release"
     exit 1
 fi
+
 echo "Downloading latest version from: $LATEST_DEB"
-wget "$LATEST_DEB" -O latest.deb
-dpkg -x latest.deb "$INSTALL_DIR"
-dpkg -e latest.deb "$INSTALL_DIR/DEBIAN"
+wget "$LATEST_DEB" -O latest.deb && apt install -y ./latest.deb
 
-# Set directory and file permissions
-chmod 700 "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chmod 500 {} \;
-find "$INSTALL_DIR" -type d -exec chmod 500 {} \;
+# Create service user for FastAPI
+useradd -r -s /sbin/nologin fastapi_service || true
 
-# Make files immutable after setting permissions
-chattr +i "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chattr +i {} \;
-find "$INSTALL_DIR" -type d -exec chattr +i {} \;
+# Configure advanced security for FastAPI directory
+secure_fastapi_directory() {
+    local app_dir="/opt/fastapi-app"
+    
+    # Set ownership and base permissions
+    chown -R fastapi_service:fastapi_service "$app_dir"
+    chmod 500 "$app_dir"  # Read & execute only for owner
+    
+    # Set restrictive permissions on all subdirectories and files
+    find "$app_dir" -type f -exec chmod 400 {} \;  # Read-only for files
+    find "$app_dir" -type d -exec chmod 500 {} \;  # Read & execute for directories
+    
+    # Apply ACL restrictions
+    setfacl -R -m u::r-x,g::---,o::--- "$app_dir"
+    
+    # Make directory immutable
+    chattr +i "$app_dir"
+    
+    # Create protection service
+    cat > /etc/systemd/system/fastapi-protect.service << EOF
+[Unit]
+Description=Protect FastAPI directory permissions
+After=network.target
 
-# Configure MongoDB
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/chattr +i /opt/fastapi-app
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl enable fastapi-protect
+}
+
+# MongoDB Configuration
 mkdir -p /etc/mongod/
 cat > /etc/mongod.conf << EOF
 storage:
@@ -71,17 +98,24 @@ security:
   authorization: disabled
 EOF
 
-mkdir -p /var/lib/mongodb /var/log/mongodb
-chown -R mongodb:mongodb /var/lib/mongodb /var/log/mongodb
-chmod 755 /var/lib/mongodb /var/log/mongodb
+# Set up MongoDB directories
+mkdir -p /var/lib/mongodb
+mkdir -p /var/log/mongodb
+chown -R mongodb:mongodb /var/lib/mongodb
+chown -R mongodb:mongodb /var/log/mongodb
+chmod 755 /var/lib/mongodb
+chmod 755 /var/log/mongodb
 
+# Start MongoDB services
 systemctl daemon-reload
 systemctl start mongod
 systemctl enable mongod
 systemctl restart mongod
+
+echo "Waiting for MongoDB to start..."
 sleep 5
 
-# Set up MongoDB users
+# Configure MongoDB admin user
 mongosh admin --eval "
   db.createUser({
     user: '$MONGODB_ADMIN',
@@ -90,11 +124,15 @@ mongosh admin --eval "
   })
 "
 
+# Enable MongoDB authentication
 sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
-systemctl restart mongod
 
-# Clean up
+# Apply FastAPI security measures
+secure_fastapi_directory
+
+# Cleanup
 rm latest.deb
 
-echo "Installation and security setup completed successfully!"
-echo "MongoDB connection for admin: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
+echo "Installation completed with enhanced security measures!"
+echo "MongoDB connection string: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
+echo "Note: The FastAPI application directory has been secured with strict permissions."
