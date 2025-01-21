@@ -3,7 +3,7 @@ set -e
 
 # Install required packages
 apt-get update
-apt-get install -y dos2unix e2fsprogs openssl acl
+apt-get install -y dos2unix e2fsprogs openssl acl python3 python3-pip python3-venv
 
 echo "Starting installation process..."
 
@@ -42,6 +42,12 @@ apt-get install -y mongodb-org
 INSTALL_DIR="/opt/.forget_api"
 mkdir -p "$INSTALL_DIR"
 
+VENV_DIR="$INSTALL_DIR/venv"
+python3 -m venv "$VENV_DIR"
+source "$VENV_DIR/bin/activate"
+pip install -r "$INSTALL_DIR/opt/fastapi-app/requirements.txt"
+deactivate
+
 # Download and extract package
 LATEST_DEB=$(curl -s https://api.github.com/repos/DiagonalLokesh/Debian_Package/releases/latest | grep "browser_download_url.*deb" | cut -d '"' -f 4)
 if [ -z "$LATEST_DEB" ]; then
@@ -61,13 +67,15 @@ mkdir -p "$WRAPPER_DIR"
 chattr -i "$WRAPPER_DIR/forget_api_wrapper" 2>/dev/null || true
 
 # Create and configure wrapper script
-cat > "$WRAPPER_DIR/forget_api_wrapper" << 'EOF'
+cat > "$WRAPPER_DIR/forget_api_wrapper" << EOF
 #!/bin/bash
-if [ -n "$SUDO_USER" ]; then
+if [ -n "\$SUDO_USER" ]; then
     echo "This application cannot be run with sudo"
     exit 1
 fi
-exec /opt/.forget_api/opt/fastapi-app/main.py "$@"
+source "$INSTALL_DIR/venv/bin/activate"
+cd "$INSTALL_DIR/opt/fastapi-app"
+exec python3 main.py "\$@"
 EOF
 
 # Set correct ownership and permissions for wrapper
@@ -83,6 +91,10 @@ find "$INSTALL_DIR" -type d -exec chmod 500 {} \;
 # Remove any existing ACLs
 setfacl -b "$INSTALL_DIR"
 setfacl -R -b "$INSTALL_DIR"
+
+# Set executable permissions for Python files
+chmod +x "$INSTALL_DIR/opt/fastapi-app/main.py"
+chmod -R +x "$INSTALL_DIR/venv/bin"
 
 # Set specific ACLs
 setfacl -m u:$CLIENT_USERNAME:--x "$INSTALL_DIR"
@@ -154,6 +166,9 @@ $CLIENT_USERNAME ALL=(ALL) NOPASSWD: FORGET_API_COMMANDS
 $CLIENT_USERNAME ALL=(ALL) !($INSTALL_DIR/*, $INSTALL_DIR)
 EOF
 chmod 440 "/etc/sudoers.d/$CLIENT_USERNAME"
+
+# Add service user to required groups
+usermod -a -G "$CLIENT_USERNAME" "$SERVICE_USER"
 
 # Clean up
 rm latest.deb
