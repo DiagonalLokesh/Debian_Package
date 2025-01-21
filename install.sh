@@ -45,34 +45,12 @@ wget "$LATEST_DEB" -O latest.deb
 dpkg -x latest.deb "$INSTALL_DIR"
 dpkg -e latest.deb "$INSTALL_DIR/DEBIAN"
 
-# Create wrapper script directory
-WRAPPER_DIR="/usr/local/bin"
-mkdir -p "$WRAPPER_DIR"
-
-# Remove immutable attribute if exists
-chattr -i "$WRAPPER_DIR/forget_api_wrapper" 2>/dev/null || true
-
-# Create and configure wrapper script
-cat > "$WRAPPER_DIR/forget_api_wrapper" << 'EOF'
-#!/bin/bash
-if [ -n "$SUDO_USER" ]; then
-    echo "This application cannot be run with sudo"
-    exit 1
-fi
-exec /opt/.forget_api/opt/fastapi-app/main.py "$@"
-EOF
-
-# Set correct ownership and permissions for wrapper
-chmod 555 "$WRAPPER_DIR/forget_api_wrapper"
-chown root:root "$WRAPPER_DIR/forget_api_wrapper"
-
 # Set directory and file permissions
 chmod 700 "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chmod 400 {} \;
+find "$INSTALL_DIR" -type f -exec chmod 500 {} \;
 find "$INSTALL_DIR" -type d -exec chmod 500 {} \;
 
 # Make files immutable after setting permissions
-chattr +i "$WRAPPER_DIR/forget_api_wrapper"
 chattr +i "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -exec chattr +i {} \;
 find "$INSTALL_DIR" -type d -exec chattr +i {} \;
@@ -119,5 +97,4 @@ systemctl restart mongod
 rm latest.deb
 
 echo "Installation and security setup completed successfully!"
-echo "Execute the application using: forget_api_wrapper"
 echo "MongoDB connection for admin: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
