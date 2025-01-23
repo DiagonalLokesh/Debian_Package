@@ -55,7 +55,7 @@ chmod 0440 /etc/sudoers.d/$CLIENT_USERNAME
 
 # Configure advanced security for FastAPI directory
 secure_fastapi_directory() {
-    local app_dir="/usr/bin/main"
+    local app_dir="/usr/bin/"
     
     # Set ownership and base permissions
     chown -R fastapi_service:fastapi_service "$app_dir"
