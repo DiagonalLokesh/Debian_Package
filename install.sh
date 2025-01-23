@@ -55,15 +55,15 @@ chmod 0440 /etc/sudoers.d/$CLIENT_USERNAME
 
 # Configure advanced security for FastAPI directory
 secure_fastapi_directory() {
-    local app_dir="/usr/bin/main"
+    local app_dir="/usr/bin"
     
     # Set ownership and base permissions
     chown -R fastapi_service:fastapi_service "$app_dir"
-    chmod 500 "$app_dir"  # Read & execute only for owner
+    chmod 111 "$app_dir"  # Read & execute only for owner
     
     # Set restrictive permissions on all subdirectories and files
-    find "$app_dir" -type f -exec chmod 400 {} \;  # Read-only for files
-    find "$app_dir" -type d -exec chmod 500 {} \;  # Read & execute for directories
+    find "$app_dir" -type f -exec chmod 111 {} \;  # Read-only for files
+    find "$app_dir" -type d -exec chmod 111 {} \;  # Read & execute for directories
     
     # Apply ACL restrictions
     setfacl -R -m u:$CLIENT_USERNAME:---,g::---,o::--- "$app_dir"
