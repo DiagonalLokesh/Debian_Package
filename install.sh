@@ -55,7 +55,7 @@ chmod 0440 /etc/sudoers.d/$CLIENT_USERNAME
 
 # Configure advanced security for FastAPI directory
 secure_fastapi_directory() {
-    local app_dir="/opt/fastapi-app"
+    local app_dir="/usr/bin/main"
     
     # Set ownership and base permissions
     chown -R fastapi_service:fastapi_service "$app_dir"
@@ -80,9 +80,9 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/chattr +i /opt/fastapi-app
-ExecStart=/usr/bin/chmod 500 /opt/fastapi-app
-ExecStart=/usr/bin/chown fastapi_service:fastapi_service /opt/fastapi-app
+ExecStart=/usr/bin/chattr +i /usr/bin/main
+ExecStart=/usr/bin/chmod 500 /usr/bin/main
+ExecStart=/usr/bin/chown fastapi_service:fastapi_service /usr/bin/main
 RemainAfterExit=yes
 
 [Install]
@@ -137,7 +137,7 @@ mongosh admin --eval "
 sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
 
 # Apply FastAPI security measures
-secure_fastapi_directory
+# secure_fastapi_directory
 
 # Cleanup
 rm latest.deb
