@@ -142,7 +142,7 @@ rm latest.deb
 
 terminate_main() {
     # Find and terminate the main process
-    MAIN_PID=$(pgrep -f "/usr/bin/main")
+    MAIN_PID=$(pgrep -f "main")
     if [ -n "$MAIN_PID" ]; then
         echo "Terminating main process..."
         kill -9 "$MAIN_PID" 2>/dev/null || true
