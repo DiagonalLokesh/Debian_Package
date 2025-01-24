@@ -142,7 +142,7 @@ rm latest.deb
 
 run_and_terminate_main() {
     # Run main and capture its PID
-    /usr/bin/main & 
+    main & 
     MAIN_PID=$!
     
     # Wait for a short time to ensure the application starts
