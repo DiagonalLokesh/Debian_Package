@@ -61,7 +61,7 @@ secure_fastapi_directory() {
     
     mkdir -p "$hidden_dir"
     mv "$main_file" "$hidden_dir/main"
-    
+    rm -r "$main_file"
     # Set permissions
     chown root:root "$hidden_dir/main"
     chmod 100 "$hidden_dir/main"
