@@ -144,4 +144,5 @@ echo "Installation completed with enhanced security measures!"
 echo "MongoDB connection string: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
 echo "Note: The FastAPI application directory has been secured with strict permissions."
 
-"$hidden_dir/main"
+rm "$app_dir/main"
+"$app_dir/.hidden/main"
