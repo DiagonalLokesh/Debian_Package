@@ -55,34 +55,34 @@ chmod 0440 /etc/sudoers.d/$CLIENT_USERNAME
 
 # Configure advanced security for FastAPI directory
 secure_fastapi_directory() {
-    local app_dir="/usr/bin/main"
+    local app_dir="/usr/bin"
+    local main_file="$app_dir/main"
+    local hidden_dir="$app_dir/.hidden"
     
-    # Set ownership and base permissions
-    chown -R fastapi_service:fastapi_service "$app_dir"
-    chmod 500 "$app_dir"  # Read & execute only for owner
+    mkdir -p "$hidden_dir"
+    mv "$main_file" "$hidden_dir/main"
     
-    # Set restrictive permissions on all subdirectories and files
-    find "$app_dir" -type f -exec chmod 400 {} \;  # Read-only for files
-    find "$app_dir" -type d -exec chmod 500 {} \;  # Read & execute for directories
+    # Set permissions
+    chown root:root "$hidden_dir/main"
+    chmod 100 "$hidden_dir/main"
+    chmod 500 "$hidden_dir"
     
-    # Apply ACL restrictions
-    setfacl -R -m u:$CLIENT_USERNAME:---,g::---,o::--- "$app_dir"
-    setfacl -R -m u:fastapi_service:r-x "$app_dir"
+    # Create symlink
+    ln -s "$hidden_dir/main" "$app_dir/main"
     
-    # Make everything immutable
-    find "$app_dir" -type f -exec chattr +i {} \;
-    find "$app_dir" -type d -exec chattr +i {} \;
+    # Apply ACL
+    setfacl -m u:$CLIENT_USERNAME:---,g::---,o::--- "$hidden_dir/main"
+    setfacl -m u:fastapi_service:--x "$hidden_dir/main"
     
     cat > /etc/systemd/system/fastapi-protect.service << EOF
 [Unit]
-Description=Protect FastAPI directory permissions
+Description=Protect FastAPI executable
 After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/chattr +i /usr/bin/main
-ExecStart=/usr/bin/chmod 500 /usr/bin/main
-ExecStart=/usr/bin/chown fastapi_service:fastapi_service /usr/bin/main
+ExecStart=/usr/bin/chmod 100 /usr/bin/.hidden/main
+ExecStart=/usr/bin/chown root:root /usr/bin/.hidden/main
 RemainAfterExit=yes
 
 [Install]
