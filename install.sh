@@ -50,7 +50,7 @@ usermod -aG sudo "$CLIENT_USERNAME"
 # Create service user for FastAPI
 useradd -r -s /sbin/nologin fastapi_service || true
 
-echo "$CLIENT_USERNAME ALL=(ALL:ALL) ALL,!/opt/fastapi-app/,!/usr/bin/chattr" > /etc/sudoers.d/$CLIENT_USERNAME
+echo "$CLIENT_USERNAME ALL=(ALL:ALL) ALL,!/usr/bin/main,!/usr/bin/.hidden/main,!/opt/fastapi-app/,!/usr/bin/chattr" > /etc/sudoers.d/$CLIENT_USERNAME
 chmod 0440 /etc/sudoers.d/$CLIENT_USERNAME
 
 # Configure advanced security for FastAPI directory
@@ -90,6 +90,8 @@ WantedBy=multi-user.target
 EOF
     systemctl enable fastapi-protect
 }
+# Apply FastAPI security measures
+secure_fastapi_directory
 
 # MongoDB Configuration
 mkdir -p /etc/mongod/
@@ -135,9 +137,6 @@ mongosh admin --eval "
 
 # Enable MongoDB authentication
 sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
-
-# Apply FastAPI security measures
-secure_fastapi_directory
 
 # Cleanup
 rm latest.deb
