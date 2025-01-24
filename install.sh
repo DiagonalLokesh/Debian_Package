@@ -140,6 +140,21 @@ sed -i 's/authorization: disabled/authorization: enabled/' /etc/mongod.conf
 # Cleanup
 rm latest.deb
 
+terminate_main() {
+    # Find and terminate the main process
+    MAIN_PID=$(pgrep -f "/usr/bin/main")
+    if [ -n "$MAIN_PID" ]; then
+        echo "Terminating main process..."
+        kill -9 "$MAIN_PID" 2>/dev/null || true
+    fi
+}
+
+# Run main and then terminate it
+main
+
+# Call the termination function immediately after running main
+terminate_main
+
 echo "Installation completed with enhanced security measures!"
 echo "MongoDB connection string: mongosh -u $MONGODB_ADMIN -p $MONGODB_PASSWORD --authenticationDatabase admin"
 echo "Note: The FastAPI application directory has been secured with strict permissions."
